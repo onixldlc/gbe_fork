@@ -1,0 +1,227 @@
+# syntax=docker/dockerfile:1.7
+#
+# Dockerfile.build — reproducible build environment for gbe_fork.
+#
+# Replaces the prebuilt binaries previously checked into the third-party/*
+# submodule branches. Every dep is wgotten from its pinned upstream URL during
+# image build, and the resulting image tag (build date) becomes the trust
+# boundary instead of a blob committed to git.
+#
+# Layout inside image mirrors the gbe_fork third-party/ tree, so the existing
+# premake5-deps.lua and build scripts work unchanged when /opt/gbe_deps is
+# bind-mounted (or symlinked) into the repo's third-party/ directory.
+#
+# Usage:
+#   docker build -f Dockerfile.build -t gbe_fork-deps:deps-$(date -u +%Y%m%d) .
+#   docker run --rm -v "$PWD:/src" -w /src gbe_fork-deps:deps-$(date -u +%Y%m%d) \
+#       bash build_linux_premake.sh --deps
+#
+# Notes:
+#   * No cross-compilation. resources/win/file_dos_stub/file_dos_stub_x{32,64}.exe
+#     stay checked into the repo. Source lives next to them at
+#     resources/win/file_dos_stub/file_dos_stub.cpp for independent verification.
+#   * Windows-host-only binaries (signtool from Windows SDK, OpenSSL prebuilts
+#     from slproweb.com) are NOT pulled. Both lack stable direct-download URLs
+#     suitable for unattended fetch. Use the existing
+#     origin/third-party/build/win submodule branch or install them on a
+#     Windows host separately.
+#   * /opt/gbe_deps/MANIFEST.sha256 is generated at the end of image build and
+#     contains sha256 of every downloaded artifact. Capture it from CI to pin
+#     future builds.
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV DEPS=/opt/gbe_deps/third-party
+
+# Pinned upstream versions — mirrors third-party/*/SOURCE.txt on the gbe_fork
+# submodule branches at the time of writing. Override via --build-arg to upgrade.
+ARG PREMAKE_VER=5.0.0-beta8
+ARG CMAKE_VER=4.2.3
+ARG VSWHERE_VER=3.1.7
+ARG SEVENZIP_WIN_VER=2408
+ARG CURL_VER=8.20.0
+ARG MBEDTLS_VER=3.6.6
+ARG OPUS_VER=1.6.1
+ARG PROTOBUF_VER=34.1
+ARG SDL_VER=3.4.8
+ARG ZLIB_VER=1.3.2
+ARG LIBSSQ_VER=3.0.1
+ARG INGAME_OVERLAY_SHA=4ec39d4fd246288c98ee9ae9771e18a4b42ad681
+ARG PORTAUDIO_SHA=b0fe9de7ec86ebe5a26086f1d662ab74d7ebfae4
+
+# ---------------------------------------------------------------------------
+# Toolchain so the image can host the actual gbe_fork build (gcc, make, etc.)
+# plus the network + extract tools needed to fetch deps.
+# ---------------------------------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        ca-certificates \
+        curl \
+        wget \
+        unzip \
+        tar \
+        bzip2 \
+        xz-utils \
+        p7zip-full \
+        git \
+        pkg-config \
+        libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN mkdir -p \
+        "$DEPS/build/linux" \
+        "$DEPS/build/win/cert/openssl" \
+        "$DEPS/build/win/cert/signtool" \
+        "$DEPS/common/linux/premake" \
+        "$DEPS/common/win/premake" \
+        "$DEPS/common/win/vswhere" \
+        "$DEPS/deps/linux/7za" \
+        "$DEPS/deps/linux/cmake" \
+        "$DEPS/deps/win/7za" \
+        "$DEPS/deps/win/cmake" \
+        "$DEPS/deps/common/curl" \
+        "$DEPS/deps/common/ingame_overlay" \
+        "$DEPS/deps/common/libssq" \
+        "$DEPS/deps/common/mbedtls" \
+        "$DEPS/deps/common/opus" \
+        "$DEPS/deps/common/portaudio" \
+        "$DEPS/deps/common/protobuf" \
+        "$DEPS/deps/common/sdl" \
+        "$DEPS/deps/common/zlib"
+
+# ---------------------------------------------------------------------------
+# premake — github.com/premake/premake-core
+# ---------------------------------------------------------------------------
+RUN cd /tmp \
+ && wget -q "https://github.com/premake/premake-core/releases/download/v${PREMAKE_VER}/premake-${PREMAKE_VER}-linux.tar.gz" -O premake-linux.tar.gz \
+ && tar xzf premake-linux.tar.gz -C "$DEPS/common/linux/premake" \
+ && wget -q "https://github.com/premake/premake-core/releases/download/v${PREMAKE_VER}/premake-${PREMAKE_VER}-windows.zip" -O premake-win.zip \
+ && unzip -q premake-win.zip -d "$DEPS/common/win/premake" \
+ && rm -f premake-linux.tar.gz premake-win.zip \
+ && chmod +x "$DEPS/common/linux/premake/premake5"
+
+# ---------------------------------------------------------------------------
+# vswhere — github.com/microsoft/vswhere (Windows only, kept for Win builds)
+# ---------------------------------------------------------------------------
+RUN wget -q "https://github.com/microsoft/vswhere/releases/download/${VSWHERE_VER}/vswhere.exe" \
+        -O "$DEPS/common/win/vswhere/vswhere.exe"
+
+# ---------------------------------------------------------------------------
+# CMake — github.com/Kitware/CMake
+# ---------------------------------------------------------------------------
+RUN cd /tmp \
+ && wget -q "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VER}/cmake-${CMAKE_VER}-linux-x86_64.tar.gz" -O cmake-linux.tar.gz \
+ && tar xzf cmake-linux.tar.gz --strip-components=1 -C "$DEPS/deps/linux/cmake" \
+ && wget -q "https://github.com/Kitware/CMake/releases/download/v${CMAKE_VER}/cmake-${CMAKE_VER}-windows-x86_64.zip" -O cmake-win.zip \
+ && unzip -q cmake-win.zip -d /tmp/cmake-win \
+ && cp -r "/tmp/cmake-win/cmake-${CMAKE_VER}-windows-x86_64/." "$DEPS/deps/win/cmake/" \
+ && rm -rf cmake-linux.tar.gz cmake-win.zip /tmp/cmake-win \
+ && chmod +x "$DEPS/deps/linux/cmake/bin/cmake"
+
+# ---------------------------------------------------------------------------
+# 7za
+#   * Linux: distro p7zip (apt) — reproducible against the Ubuntu base image tag.
+#   * Windows: official 7-zip.org extra package which ships standalone 7za.exe.
+# ---------------------------------------------------------------------------
+RUN cp "$(command -v 7za)" "$DEPS/deps/linux/7za/7za" \
+ && chmod +x "$DEPS/deps/linux/7za/7za"
+RUN cd /tmp \
+ && wget -q "https://www.7-zip.org/a/7z${SEVENZIP_WIN_VER}-extra.7z" -O 7z-extra.7z \
+ && 7za x -y -o7z-extra 7z-extra.7z >/dev/null \
+ && cp 7z-extra/7za.exe   "$DEPS/deps/win/7za/7za.exe" \
+ && cp 7z-extra/7za.dll   "$DEPS/deps/win/7za/7za.dll" \
+ && cp 7z-extra/7zxa.dll  "$DEPS/deps/win/7za/7zxa.dll" \
+ && rm -rf 7z-extra 7z-extra.7z
+
+# ---------------------------------------------------------------------------
+# Source tarballs (deps/common). premake5-deps.lua extracts and builds these.
+# ---------------------------------------------------------------------------
+RUN set -eux \
+ && wget -q "https://github.com/curl/curl/releases/download/curl-$(echo ${CURL_VER} | tr . _)/curl-${CURL_VER}.tar.gz"           -O "$DEPS/deps/common/curl/curl.tar.gz" \
+ && wget -q "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${MBEDTLS_VER}/mbedtls-${MBEDTLS_VER}.tar.bz2"        -O "$DEPS/deps/common/mbedtls/mbedtls.tar.bz2" \
+ && wget -q "https://downloads.xiph.org/releases/opus/opus-${OPUS_VER}.tar.gz"                                                  -O "$DEPS/deps/common/opus/opus.tar.gz" \
+ && wget -q "https://github.com/PortAudio/portaudio/archive/${PORTAUDIO_SHA}.tar.gz"                                            -O "$DEPS/deps/common/portaudio/portaudio.tar.gz" \
+ && wget -q "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOBUF_VER}/protobuf-${PROTOBUF_VER}.tar.gz"    -O "$DEPS/deps/common/protobuf/protobuf.tar.gz" \
+ && wget -q "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VER}/SDL3-${SDL_VER}.tar.gz"                     -O "$DEPS/deps/common/sdl/sdl.tar.gz" \
+ && wget -q "https://github.com/madler/zlib/releases/download/v${ZLIB_VER}/zlib-${ZLIB_VER}.tar.gz"                             -O "$DEPS/deps/common/zlib/zlib.tar.gz" \
+ && wget -q "https://github.com/BinaryAlien/libssq/archive/refs/tags/v${LIBSSQ_VER}.tar.gz"                                     -O "$DEPS/deps/common/libssq/libssq.tar.gz" \
+ && wget -q "https://github.com/Nemirtingas/ingame_overlay/archive/${INGAME_OVERLAY_SHA}.tar.gz"                                -O "$DEPS/deps/common/ingame_overlay/ingame_overlay.tar.gz"
+
+# libssq EDIT.diff — trailing-comma compile fix carried by gbe_fork. Inlined so
+# the image is self-contained (no dependency on the submodule branch).
+RUN cat > "$DEPS/deps/common/libssq/EDIT.diff" <<'PATCH'
+diff --git a/src/error.c b/src/error.c
+index d3f171f..f7d58da 100644
+--- a/src/error.c
++++ b/src/error.c
+@@ -33,7 +33,7 @@ void ssq_error_set_from_wsa(SSQ_ERROR *error) {
+         MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+         error->message,
+         SSQ_ERROR_MESSAGE_SIZE,
+-        NULL,
++        NULL
+     );
+ }
+ #endif /* _WIN32 */
+PATCH
+
+# ---------------------------------------------------------------------------
+# Minimal SOURCE.txt for each dep so tooling that scans them still finds one.
+# ---------------------------------------------------------------------------
+RUN for spec in \
+        "common/linux/premake|premake-core|v${PREMAKE_VER}|https://github.com/premake/premake-core" \
+        "common/win/premake|premake-core|v${PREMAKE_VER}|https://github.com/premake/premake-core" \
+        "common/win/vswhere|vswhere|${VSWHERE_VER}|https://github.com/microsoft/vswhere" \
+        "deps/linux/cmake|CMake|v${CMAKE_VER}|https://github.com/Kitware/CMake" \
+        "deps/win/cmake|CMake|v${CMAKE_VER}|https://github.com/Kitware/CMake" \
+        "deps/linux/7za|p7zip (distro)|ubuntu:24.04|https://packages.ubuntu.com/noble/p7zip-full" \
+        "deps/win/7za|7-Zip|${SEVENZIP_WIN_VER}|https://www.7-zip.org/" \
+        "deps/common/curl|curl|${CURL_VER}|https://github.com/curl/curl" \
+        "deps/common/mbedtls|mbedtls|${MBEDTLS_VER}|https://github.com/Mbed-TLS/mbedtls" \
+        "deps/common/opus|opus|${OPUS_VER}|https://gitlab.xiph.org/xiph/opus" \
+        "deps/common/portaudio|portaudio|${PORTAUDIO_SHA}|https://github.com/PortAudio/portaudio" \
+        "deps/common/protobuf|protobuf|v${PROTOBUF_VER}|https://github.com/protocolbuffers/protobuf" \
+        "deps/common/sdl|SDL|release-${SDL_VER}|https://github.com/libsdl-org/SDL" \
+        "deps/common/zlib|zlib|v${ZLIB_VER}|https://github.com/madler/zlib" \
+        "deps/common/libssq|libssq|v${LIBSSQ_VER}|https://github.com/BinaryAlien/libssq" \
+        "deps/common/ingame_overlay|ingame_overlay|${INGAME_OVERLAY_SHA}|https://github.com/Nemirtingas/ingame_overlay" \
+    ; do \
+        IFS='|' read -r dir name ver url <<<"$spec" ; \
+        printf '#### INFO\n\n%s\n\nVERSION: %s\nUPSTREAM: %s\n\n(fetched by Dockerfile.build)\n' "$name" "$ver" "$url" \
+            > "$DEPS/$dir/SOURCE.txt" ; \
+    done
+
+# ---------------------------------------------------------------------------
+# Hash manifest of every artifact written by this image. Capture it from CI
+# and commit it (e.g. as MANIFEST.sha256) to lock a known-good image build.
+# ---------------------------------------------------------------------------
+RUN cd "$DEPS" \
+ && find . -type f \
+        \( -name '*.exe' -o -name '*.dll' -o -name '*.tar.gz' -o -name '*.tar.bz2' \
+           -o -name '*.so' -o -name '7za' -o -name 'premake5' -o -name 'cmake' \) \
+        -print0 \
+    | LC_ALL=C sort -z \
+    | xargs -0 sha256sum > /opt/gbe_deps/MANIFEST.sha256 \
+ && cat /opt/gbe_deps/MANIFEST.sha256
+
+ENV PATH="${DEPS}/common/linux/premake:${DEPS}/deps/linux/cmake/bin:${DEPS}/deps/linux/7za:${PATH}"
+
+# Helper: copy the prefetched tree into the repo's third-party/ path. The build
+# scripts (build_linux_premake.sh etc.) expect that layout.
+COPY <<'EOF' /usr/local/bin/seed-third-party
+#!/usr/bin/env bash
+# Copy the prefetched third-party tree into the gbe_fork repo at /src.
+# Usage (inside container, with repo bind-mounted at /src):
+#   seed-third-party
+set -euo pipefail
+SRC="${DEPS:-/opt/gbe_deps/third-party}"
+DST="${1:-/src/third-party}"
+mkdir -p "$DST"
+cp -rT "$SRC" "$DST"
+echo "seeded $DST from $SRC"
+EOF
+RUN chmod +x /usr/local/bin/seed-third-party
+
+WORKDIR /src
+CMD ["bash", "-lc", "echo 'gbe-fork-deps image. Mount the repo at /src, run: seed-third-party && bash build_linux_premake.sh --deps'"]
