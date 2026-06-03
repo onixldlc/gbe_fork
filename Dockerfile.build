@@ -196,4 +196,4 @@ EOF
 RUN chmod +x /usr/local/bin/seed-third-party
 
 WORKDIR /src
-CMD ["bash", "-lc", "echo 'gbe-fork-deps image. Mount the repo at /src, run: seed-third-party && bash build_linux_premake.sh --deps'"]
+CMD ["bash", "-lc", "echo 'gbe-deps image. Mount the repo at /src, run: seed-third-party && bash build_linux_premake.sh --deps'"]

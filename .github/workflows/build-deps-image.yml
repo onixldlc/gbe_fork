@@ -32,7 +32,7 @@ jobs:
           SUFFIX="${{ github.event.inputs.tag_suffix }}"
           TAG="deps-${DATE}"
           [ -n "$SUFFIX" ] && TAG="${TAG}-${SUFFIX}"
-          IMAGE=ghcr.io/${{ github.repository_owner }}/${{ github.event.repository.name }}-deps
+          IMAGE=ghcr.io/${{ github.repository_owner }}/gbe-deps
           IMAGE=$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')
           {
             echo "date_tag=$IMAGE:$TAG"
