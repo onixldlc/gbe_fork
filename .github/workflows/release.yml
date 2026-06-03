@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: "write"
+  packages: "read"
 
 env:
   THIRD_PARTY_BASE_DIR: "third-party"
@@ -36,11 +37,20 @@ jobs:
       - name: "Checkout branch"
         uses: actions/checkout@v6
 
-      - name: "Clone third-party deps (deps/win)"
-        uses: actions/checkout@v6
+      # gbe-third-party-${{ github.run_id }} was uploaded by the seed sub-job
+      # inside the emu-win-all reusable workflow.
+      - name: "Download seeded third-party artifact"
+        uses: actions/download-artifact@v8
         with:
-          ref: "third-party/deps/win"
-          path: "${{env.THIRD_PARTY_BASE_DIR}}/deps/win"
+          name: "gbe-third-party-${{ github.run_id }}"
+          path: "${{ github.workspace }}"
+
+      - name: "Extract third-party tarball"
+        shell: "cmd"
+        working-directory: "${{ github.workspace }}"
+        run: |
+          tar -xzf third-party.tar.gz
+          del /q third-party.tar.gz
 
       # download artifacts
       - name: "Download emu build artifacts (Win)"
@@ -110,11 +120,11 @@ jobs:
       - name: "Checkout branch"
         uses: actions/checkout@v6
 
-      - name: "Clone third-party deps (deps/linux)"
-        uses: actions/checkout@v6
+      - name: "Seed third-party from gbe-deps image"
+        uses: ./.github/actions/seed-third-party
         with:
-          ref: "third-party/deps/linux"
-          path: "${{env.THIRD_PARTY_BASE_DIR}}/deps/linux"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target: "${{ env.THIRD_PARTY_BASE_DIR }}"
 
       # download artifacts
       - name: "Download emu build artifacts (linux)"
@@ -208,11 +218,18 @@ jobs:
       - name: "Checkout branch"
         uses: actions/checkout@v6
 
-      - name: "Clone third-party deps (deps/win)"
-        uses: actions/checkout@v6
+      - name: "Download seeded third-party artifact"
+        uses: actions/download-artifact@v8
         with:
-          ref: "third-party/deps/win"
-          path: "${{env.THIRD_PARTY_BASE_DIR}}/deps/win"
+          name: "gbe-third-party-${{ github.run_id }}"
+          path: "${{ github.workspace }}"
+
+      - name: "Extract third-party tarball"
+        shell: "cmd"
+        working-directory: "${{ github.workspace }}"
+        run: |
+          tar -xzf third-party.tar.gz
+          del /q third-party.tar.gz
 
       # download artifacts
       - name: "Download script build artifacts (Win)"
@@ -320,11 +337,18 @@ jobs:
       - name: "Checkout branch"
         uses: actions/checkout@v6
 
-      - name: "Clone third-party deps (deps/win)"
-        uses: actions/checkout@v6
+      - name: "Download seeded third-party artifact"
+        uses: actions/download-artifact@v8
         with:
-          ref: "third-party/deps/win"
-          path: "${{env.THIRD_PARTY_BASE_DIR}}/deps/win"
+          name: "gbe-third-party-${{ github.run_id }}"
+          path: "${{ github.workspace }}"
+
+      - name: "Extract third-party tarball"
+        shell: "cmd"
+        working-directory: "${{ github.workspace }}"
+        run: |
+          tar -xzf third-party.tar.gz
+          del /q third-party.tar.gz
 
       # download artifacts
       - name: "Download emu build artifacts (Win)"
@@ -412,11 +436,18 @@ jobs:
       - name: "Checkout branch"
         uses: actions/checkout@v6
 
-      - name: "Clone third-party deps (deps/win)"
-        uses: actions/checkout@v6
+      - name: "Download seeded third-party artifact"
+        uses: actions/download-artifact@v8
         with:
-          ref: "third-party/deps/win"
-          path: "${{env.THIRD_PARTY_BASE_DIR}}/deps/win"
+          name: "gbe-third-party-${{ github.run_id }}"
+          path: "${{ github.workspace }}"
+
+      - name: "Extract third-party tarball"
+        shell: "cmd"
+        working-directory: "${{ github.workspace }}"
+        run: |
+          tar -xzf third-party.tar.gz
+          del /q third-party.tar.gz
 
       # download artifacts
       - name: "Download script build artifacts (Win)"
