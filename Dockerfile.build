@@ -1,34 +1,3 @@
-# syntax=docker/dockerfile:1.7
-#
-# Dockerfile.build — reproducible build environment for gbe_fork.
-#
-# Replaces the prebuilt binaries previously checked into the third-party/*
-# submodule branches. Every dep is wgotten from its pinned upstream URL during
-# image build, and the resulting image tag (build date) becomes the trust
-# boundary instead of a blob committed to git.
-#
-# Layout inside image mirrors the gbe_fork third-party/ tree, so the existing
-# premake5-deps.lua and build scripts work unchanged when /opt/gbe_deps is
-# bind-mounted (or symlinked) into the repo's third-party/ directory.
-#
-# Usage:
-#   docker build -f Dockerfile.build -t gbe_fork-deps:deps-$(date -u +%Y%m%d) .
-#   docker run --rm -v "$PWD:/src" -w /src gbe_fork-deps:deps-$(date -u +%Y%m%d) \
-#       bash build_linux_premake.sh --deps
-#
-# Notes:
-#   * No cross-compilation. resources/win/file_dos_stub/file_dos_stub_x{32,64}.exe
-#     stay checked into the repo. Source lives next to them at
-#     resources/win/file_dos_stub/file_dos_stub.cpp for independent verification.
-#   * Windows-host-only binaries (signtool from Windows SDK, OpenSSL prebuilts
-#     from slproweb.com) are NOT pulled. Both lack stable direct-download URLs
-#     suitable for unattended fetch. Use the existing
-#     origin/third-party/build/win submodule branch or install them on a
-#     Windows host separately.
-#   * /opt/gbe_deps/MANIFEST.sha256 is generated at the end of image build and
-#     contains sha256 of every downloaded artifact. Capture it from CI to pin
-#     future builds.
-
 FROM ubuntu:24.04
 
 ENV DEBIAN_FRONTEND=noninteractive

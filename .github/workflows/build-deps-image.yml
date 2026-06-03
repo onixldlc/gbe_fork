@@ -6,10 +6,9 @@ name: build deps image
 # branches).
 
 on:
-  schedule:
-    # Monthly rebuild on the 1st @ 06:00 UTC so upstream availability drift gets
-    # caught early (a release URL going 404 surfaces here, not in a user build).
-    - cron: '0 6 1 * *'
+  push:
+    paths:
+      - 'Dockerfile.build'
   workflow_dispatch:
     inputs:
       tag_suffix:
