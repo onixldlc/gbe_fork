@@ -1,0 +1,51 @@
+name: 'Seed third-party from gbe-deps image'
+description: >
+  Pulls ghcr.io/<owner>/gbe-deps:<tag> and copies /opt/gbe_deps/third-party
+  into ./third-party. Linux runners only (Windows runners cannot pull Linux
+  images by default; use workflow seed-deps-artifact.yml + download-artifact).
+
+inputs:
+  image:
+    description: >
+      Image ref to pull. Defaults to ghcr.io/<repository_owner>/gbe-deps:latest
+      (lowercased).
+    required: false
+    default: ''
+  tag:
+    description: 'Tag to use if image is not specified. Default: latest.'
+    required: false
+    default: 'latest'
+  token:
+    description: 'GHCR token (typically secrets.GITHUB_TOKEN).'
+    required: true
+  target:
+    description: 'Destination directory for the third-party tree.'
+    required: false
+    default: 'third-party'
+
+runs:
+  using: composite
+  steps:
+    - name: 'Resolve image and pull'
+      shell: bash
+      run: |
+        set -euo pipefail
+        IMAGE="${{ inputs.image }}"
+        if [ -z "$IMAGE" ]; then
+          OWNER=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER}/gbe-deps:${{ inputs.tag }}"
+        fi
+        echo "image=$IMAGE" >> "$GITHUB_ENV"
+        echo "${{ inputs.token }}" | docker login ghcr.io -u '${{ github.actor }}' --password-stdin
+        docker pull "$IMAGE"
+
+    - name: 'Copy third-party tree out of image'
+      shell: bash
+      run: |
+        set -euo pipefail
+        TARGET="${{ inputs.target }}"
+        mkdir -p "$TARGET"
+        CID=$(docker create "$image")
+        docker cp "$CID:/opt/gbe_deps/third-party/." "$TARGET/"
+        docker rm "$CID" >/dev/null
+        echo "seeded $TARGET from $image"

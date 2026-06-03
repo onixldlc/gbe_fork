@@ -7,7 +7,8 @@ on:
     # allows manual trigger
 
 permissions:
-  contents: "write"
+  contents: "read"
+  packages: "read"
 
 env:
   PREMAKE_ACTION: "gmake"
@@ -65,18 +66,13 @@ jobs:
           key: "${{ env.DEPS_CACHE_KEY }}-${{ env.PREMAKE_ACTION }}"
           path: "${{ env.DEPS_CACHE_DIR }}/${{ env.PREMAKE_ACTION }}"
 
-      # extra helpers/tools, these are not built inside the deps build dir
-      - name: "Clone third-party build helpers (common/linux)"
-        uses: actions/checkout@v6
+      # Seed third-party tree from the gbe-deps Docker image (ghcr.io/<owner>/gbe-deps:latest).
+      # Replaces the previous per-branch actions/checkout of third-party/{common/linux,build/linux}.
+      - name: "Seed third-party from gbe-deps image"
+        uses: ./.github/actions/seed-third-party
         with:
-          ref: "third-party/common/linux"
-          path: "${{env.THIRD_PARTY_BASE_DIR}}/common/linux"
-
-      - name: "Clone third-party build helpers (build/linux)"
-        uses: actions/checkout@v6
-        with:
-          ref: "third-party/build/linux"
-          path: "${{env.THIRD_PARTY_BASE_DIR}}/build/linux"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target: "${{ env.THIRD_PARTY_BASE_DIR }}"
 
       # fix folder permissions! not sure why this fails
       # nested subdirs "build/linux/release" cause permission problems

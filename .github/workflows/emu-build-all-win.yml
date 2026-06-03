@@ -7,7 +7,8 @@ on:
     # allows manual trigger
 
 permissions:
-  contents: "write"
+  contents: "read"
+  packages: "read"
 
 env:
   PREMAKE_ACTION: "vs2026"
@@ -85,18 +86,21 @@ jobs:
           key: "${{ env.DEPS_CACHE_KEY }}-${{ env.PREMAKE_ACTION }}"
           path: "${{ env.DEPS_CACHE_DIR }}/${{ env.PREMAKE_ACTION }}"
 
-      # extra helpers/tools, these are not built inside the deps build dir
-      - name: "Clone third-party build helpers (common/win)"
-        uses: actions/checkout@v6
+      # The `deps` reusable workflow above ran a Linux seed job that uploaded
+      # the third-party tree as artifact gbe-third-party-${{ github.run_id }}.
+      # Download + extract here in lieu of the previous per-branch checkouts.
+      - name: "Download seeded third-party artifact"
+        uses: actions/download-artifact@v8
         with:
-          ref: "third-party/common/win"
-          path: "${{env.THIRD_PARTY_BASE_DIR}}/common/win"
+          name: "gbe-third-party-${{ github.run_id }}"
+          path: "${{ github.workspace }}"
 
-      - name: "Clone third-party deps (build/win)"
-        uses: actions/checkout@v6
-        with:
-          ref: "third-party/build/win"
-          path: "${{env.THIRD_PARTY_BASE_DIR}}/build/win"
+      - name: "Extract third-party tarball"
+        shell: "cmd"
+        working-directory: "${{ github.workspace }}"
+        run: |
+          tar -xzf third-party.tar.gz
+          del /q third-party.tar.gz
 
       # generate project files
       - name: "Generate project files"

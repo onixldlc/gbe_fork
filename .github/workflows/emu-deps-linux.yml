@@ -7,7 +7,8 @@ on:
     # allows manual trigger
 
 permissions:
-  contents: "write"
+  contents: "read"
+  packages: "read"
 
 env:
   PREMAKE_ACTION: "gmake"
@@ -38,26 +39,14 @@ jobs:
         if: steps.emu-deps-cache-step.outputs.cache-hit != 'true'
         uses: actions/checkout@v6
 
-      - name: "Clone third-party deps (common/linux)"
+      # Seed third-party tree from the gbe-deps Docker image (ghcr.io/<owner>/gbe-deps:latest).
+      # Replaces the previous per-branch actions/checkout of third-party/{common/linux,deps/linux,deps/common}.
+      - name: "Seed third-party from gbe-deps image"
         if: steps.emu-deps-cache-step.outputs.cache-hit != 'true'
-        uses: actions/checkout@v6
+        uses: ./.github/actions/seed-third-party
         with:
-          ref: "third-party/common/linux"
-          path: "${{env.THIRD_PARTY_BASE_DIR}}/common/linux"
-
-      - name: "Clone third-party deps (deps/linux)"
-        if: steps.emu-deps-cache-step.outputs.cache-hit != 'true'
-        uses: actions/checkout@v6
-        with:
-          ref: "third-party/deps/linux"
-          path: "${{env.THIRD_PARTY_BASE_DIR}}/deps/linux"
-
-      - name: "Clone third-party deps (deps/common)"
-        if: steps.emu-deps-cache-step.outputs.cache-hit != 'true'
-        uses: actions/checkout@v6
-        with:
-          ref: "third-party/deps/common"
-          path: "${{env.THIRD_PARTY_BASE_DIR}}/deps/common"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          target: "${{ env.THIRD_PARTY_BASE_DIR }}"
 
       # fix folder permissions! not sure why this fails
       # nested subdirs "build/linux/release" cause permission problems

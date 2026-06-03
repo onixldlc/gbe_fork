@@ -7,7 +7,8 @@ on:
     # allows manual trigger
 
 permissions:
-  contents: "write"
+  contents: "read"
+  packages: "read"
 
 env:
   PREMAKE_ACTION: "vs2022"
@@ -21,7 +22,16 @@ env:
   MAX_PARALLEL_JOBS: 4
 
 jobs:
+  # Linux helper: pulls gbe-deps image, tars third-party, uploads as artifact.
+  # Windows runners cannot pull Linux images by default, so the artifact pattern is used.
+  seed:
+    permissions:
+      contents: read
+      packages: read
+    uses: ./.github/workflows/seed-deps-artifact.yml
+
   deps-build:
+    needs: seed
     runs-on: "windows-2022"
     if: ${{ !cancelled() }}
 
@@ -48,26 +58,22 @@ jobs:
         if: steps.emu-deps-cache-step.outputs.cache-hit != 'true'
         uses: actions/checkout@v6
 
-      - name: "Clone third-party deps (common/win)"
+      # Download the third-party tree built by the seed job (Linux runner pulled
+      # ghcr.io/<owner>/gbe-deps:latest and tarred /opt/gbe_deps/third-party).
+      - name: "Download seeded third-party artifact"
         if: steps.emu-deps-cache-step.outputs.cache-hit != 'true'
-        uses: actions/checkout@v6
+        uses: actions/download-artifact@v8
         with:
-          ref: "third-party/common/win"
-          path: "${{env.THIRD_PARTY_BASE_DIR}}/common/win"
+          name: ${{ needs.seed.outputs.artifact_name }}
+          path: "${{ github.workspace }}"
 
-      - name: "Clone third-party deps (deps/win)"
+      - name: "Extract third-party tarball"
         if: steps.emu-deps-cache-step.outputs.cache-hit != 'true'
-        uses: actions/checkout@v6
-        with:
-          ref: "third-party/deps/win"
-          path: "${{env.THIRD_PARTY_BASE_DIR}}/deps/win"
-
-      - name: "Clone third-party deps (deps/common)"
-        if: steps.emu-deps-cache-step.outputs.cache-hit != 'true'
-        uses: actions/checkout@v6
-        with:
-          ref: "third-party/deps/common"
-          path: "${{env.THIRD_PARTY_BASE_DIR}}/deps/common"
+        shell: "cmd"
+        working-directory: "${{ github.workspace }}"
+        run: |
+          tar -xzf third-party.tar.gz
+          del /q third-party.tar.gz
 
       - name: "Build deps"
         if: steps.emu-deps-cache-step.outputs.cache-hit != 'true'

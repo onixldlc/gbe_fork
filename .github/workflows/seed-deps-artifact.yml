@@ -1,0 +1,59 @@
+name: 'Seed third-party artifact'
+
+# Pulls the gbe-deps image on a Linux runner, extracts /opt/gbe_deps/third-party,
+# tars it, uploads as a per-run artifact. Windows jobs in the same workflow run
+# download + untar instead of running docker themselves (Windows GH runners
+# cannot pull Linux images without engine-switch gymnastics).
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'gbe-deps image tag (default: latest)'
+        required: false
+        type: string
+        default: 'latest'
+    outputs:
+      artifact_name:
+        description: 'Name of the uploaded artifact containing third-party.tar.gz'
+        value: ${{ jobs.seed.outputs.artifact_name }}
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  seed:
+    runs-on: ubuntu-24.04
+    outputs:
+      artifact_name: ${{ steps.naming.outputs.artifact_name }}
+    steps:
+      - name: 'Checkout (composite action only)'
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            .github/actions/seed-third-party
+          sparse-checkout-cone-mode: false
+
+      - name: 'Seed third-party'
+        uses: ./.github/actions/seed-third-party
+        with:
+          tag: ${{ inputs.tag }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 'Tar third-party tree'
+        shell: bash
+        run: tar -czf third-party.tar.gz third-party
+
+      - name: 'Compute artifact name'
+        id: naming
+        shell: bash
+        run: echo "artifact_name=gbe-third-party-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+
+      - name: 'Upload third-party artifact'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.naming.outputs.artifact_name }}
+          path: third-party.tar.gz
+          if-no-files-found: error
+          retention-days: 1
