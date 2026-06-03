@@ -19,6 +19,9 @@ ARG LIBSSQ_VER=3.0.1
 ARG INGAME_OVERLAY_SHA=4ec39d4fd246288c98ee9ae9771e18a4b42ad681
 ARG PORTAUDIO_SHA=b0fe9de7ec86ebe5a26086f1d662ab74d7ebfae4
 
+# Use bash for all RUN instructions (required for here-strings <<< and other bashisms)
+SHELL ["/bin/bash", "-c"]
+
 # ---------------------------------------------------------------------------
 # Toolchain so the image can host the actual gbe_fork build (gcc, make, etc.)
 # plus the network + extract tools needed to fetch deps.
