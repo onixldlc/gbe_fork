@@ -13,7 +13,9 @@ name: 'Publish release from build artifacts'
 
 on:
   workflow_run:
-    workflows: ['Prepare release']
+    workflows:
+      - 'Build release (all)'
+      - 'Prepare release'
     types: [completed]
   workflow_dispatch:
     inputs:
