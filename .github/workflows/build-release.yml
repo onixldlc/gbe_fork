@@ -1,0 +1,45 @@
+name: 'Build release (all)'
+
+# Single manual button that fans out to every emu + migrate_gse build workflow.
+# After all jobs finish, publish-release.yml auto-fires (workflow_run trigger)
+# and attaches the resulting artifacts to a date-tagged GitHub Release.
+#
+# Use this instead of triggering individual leaf workflows manually.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  emu-linux:
+    name: 'emu linux'
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/emu-build-all-linux.yml
+
+  emu-win:
+    name: 'emu win (vs2026)'
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/emu-build-all-win.yml
+
+  emu-win-vs22:
+    name: 'emu win (vs2022)'
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/emu-build-all-win-vs22.yml
+
+  migrate_gse-linux:
+    name: 'migrate_gse linux'
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/migrate_gse-build-linux.yml
+
+  migrate_gse-win:
+    name: 'migrate_gse win (vs2026)'
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/migrate_gse-build-win.yml
+
+  migrate_gse-win-vs22:
+    name: 'migrate_gse win (vs2022)'
+    if: ${{ !cancelled() }}
+    uses: ./.github/workflows/migrate_gse-build-win-vs22.yml

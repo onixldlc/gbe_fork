@@ -1,0 +1,92 @@
+name: build deps image
+
+# Builds Dockerfile.deps into a date-tagged image holding every pinned
+# upstream third-party dep. The image becomes the trust boundary for
+# downstream builds (replaces the prebuilt blobs on the third-party/* submodule
+# branches).
+
+on:
+  push:
+    paths:
+      - 'Dockerfile.deps'
+  workflow_dispatch:
+    inputs:
+      tag_suffix:
+        description: 'Optional suffix appended to the date tag'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Compute tags
+        id: tags
+        run: |
+          DATE=$(date -u +%Y%m%d)
+          SUFFIX="${{ github.event.inputs.tag_suffix }}"
+          TAG="deps-${DATE}"
+          [ -n "$SUFFIX" ] && TAG="${TAG}-${SUFFIX}"
+          IMAGE=ghcr.io/${{ github.repository_owner }}/gbe-deps
+          IMAGE=$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]')
+          {
+            echo "date_tag=$IMAGE:$TAG"
+            echo "latest_tag=$IMAGE:latest"
+            echo "primary=$IMAGE:$TAG"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile.deps
+          push: true
+          tags: |
+            ${{ steps.tags.outputs.date_tag }}
+            ${{ steps.tags.outputs.latest_tag }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Extract MANIFEST.sha256
+        run: |
+          docker pull "${{ steps.tags.outputs.primary }}"
+          docker run --rm "${{ steps.tags.outputs.primary }}" \
+              cat /opt/gbe_deps/MANIFEST.sha256 > MANIFEST.sha256
+          echo "----- MANIFEST.sha256 -----"
+          cat MANIFEST.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deps-manifest-${{ github.run_id }}
+          path: MANIFEST.sha256
+          if-no-files-found: error
+
+      - name: Summary
+        run: |
+          {
+            echo "## gbe-fork-deps image built"
+            echo ""
+            echo "- \`${{ steps.tags.outputs.date_tag }}\`"
+            echo "- \`${{ steps.tags.outputs.latest_tag }}\`"
+            echo ""
+            echo "### MANIFEST.sha256"
+            echo '```'
+            cat MANIFEST.sha256
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

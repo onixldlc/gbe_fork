@@ -1,0 +1,93 @@
+name: 'Seed third-party artifact'
+
+# Pulls the gbe-deps image on a Linux runner, extracts /opt/gbe_deps/third-party,
+# tars it, uploads as a per-run artifact. Windows jobs in the same workflow run
+# download + untar instead of running docker themselves (Windows GH runners
+# cannot pull Linux images without engine-switch gymnastics).
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: 'gbe-deps image tag (default: latest)'
+        required: false
+        type: string
+        default: 'latest'
+    outputs:
+      artifact_name:
+        description: 'Name of the uploaded artifact containing third-party.tar.gz'
+        value: ${{ jobs.seed.outputs.artifact_name }}
+
+permissions:
+  contents: read
+  packages: read
+  actions: read
+
+# All callers in the same parent run resolve github.run_id to the SAME value,
+# so they share one concurrency slot — only one seed job actually executes,
+# the rest no-op via the artifact-exists check below. Across different parent
+# runs the run_id differs, so unrelated builds don't block each other.
+concurrency:
+  group: seed-deps-${{ github.run_id }}
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    runs-on: ubuntu-24.04
+    outputs:
+      artifact_name: ${{ steps.naming.outputs.artifact_name }}
+    steps:
+      - name: 'Compute artifact name'
+        id: naming
+        shell: bash
+        run: echo "artifact_name=gbe-third-party-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+
+      # Skip the docker pull + tar + upload if a prior seed call already produced it.
+      - name: 'Check whether artifact already exists'
+        id: check
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          NAME="${{ steps.naming.outputs.artifact_name }}"
+          COUNT=$(gh api \
+              "repos/${{ github.repository }}/actions/runs/${{ github.run_id }}/artifacts?name=$NAME" \
+              --jq '.artifacts | length' \
+              2>/dev/null || echo 0)
+          if [ "$COUNT" -gt 0 ]; then
+            echo "Artifact $NAME already uploaded by a prior seed call; reusing."
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 'Checkout (composite action only)'
+        if: steps.check.outputs.exists != 'true'
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            .github/actions/seed-third-party
+          sparse-checkout-cone-mode: false
+
+      - name: 'Seed third-party'
+        if: steps.check.outputs.exists != 'true'
+        uses: ./.github/actions/seed-third-party
+        with:
+          tag: ${{ inputs.tag }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 'Tar third-party tree'
+        if: steps.check.outputs.exists != 'true'
+        shell: bash
+        run: tar -czf third-party.tar.gz third-party
+
+      - name: 'Upload third-party artifact'
+        if: steps.check.outputs.exists != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.naming.outputs.artifact_name }}
+          path: third-party.tar.gz
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1

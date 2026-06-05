@@ -1,0 +1,230 @@
+name: 'Publish release from build artifacts'
+
+# Picks build artifacts from a prior workflow run (release.yml /
+# emu-build-all-*.yml) and pushes them onto a GitHub Release. Tag defaults
+# to today's date (YYYYMMDD), with -r1, -r2, ... suffix if that tag already
+# exists.
+#
+# Triggers:
+#   * workflow_run — auto-fires after a successful release.yml run, no input
+#     needed.
+#   * workflow_dispatch — manual button. Optional tag override. Source run id
+#     defaults to the latest successful release.yml run on this branch.
+
+on:
+  workflow_run:
+    workflows:
+      - 'Build release (all)'
+      - 'Prepare release'
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag override. Empty = auto YYYYMMDD with -rN if taken.'
+        required: false
+        type: string
+        default: ''
+      source_run_id:
+        description: 'Workflow run ID to pull artifacts from. Empty = latest successful release.yml run on this branch.'
+        required: false
+        type: string
+        default: ''
+      source_workflow:
+        description: 'Workflow file name to look up when source_run_id is empty.'
+        required: false
+        type: string
+        default: 'release.yml'
+      artifact_pattern:
+        description: 'Glob of files to attach to the release (matched under unpacked artifacts/).'
+        required: false
+        type: string
+        default: '**/*.7z **/*.zip **/*.tar.* **/*.tar **/*.gz **/*.dll **/*.so **/*.exe'
+      release_name:
+        description: 'Release title (defaults to tag).'
+        required: false
+        type: string
+        default: ''
+      prerelease:
+        description: 'Mark release as prerelease.'
+        required: false
+        type: boolean
+        default: false
+      draft:
+        description: 'Create as draft release.'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish:
+    # If invoked via workflow_run, only proceed when the upstream run succeeded.
+    if: >-
+      github.event_name != 'workflow_run'
+      || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 'Checkout (for repo context only)'
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: 'Resolve source run ID'
+        id: src
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # workflow_run hands us the upstream run id directly.
+          if [ "${{ github.event_name }}" = "workflow_run" ]; then
+            RUN="${{ github.event.workflow_run.id }}"
+          else
+            RUN="${{ inputs.source_run_id }}"
+            if [ -z "$RUN" ]; then
+              BRANCH="${{ github.ref_name }}"
+              WORKFLOW="${{ inputs.source_workflow }}"
+              echo "Looking up latest successful run of $WORKFLOW on branch $BRANCH"
+              RUN=$(gh run list \
+                      --repo "${{ github.repository }}" \
+                      --workflow "$WORKFLOW" \
+                      --branch "$BRANCH" \
+                      --status success \
+                      --limit 1 \
+                      --json databaseId \
+                      -q '.[0].databaseId')
+              if [ -z "$RUN" ] || [ "$RUN" = "null" ]; then
+                echo "no successful run found for workflow=$WORKFLOW branch=$BRANCH" >&2
+                exit 1
+              fi
+            fi
+          fi
+          echo "Source workflow run: $RUN"
+          echo "run_id=$RUN" >> "$GITHUB_OUTPUT"
+
+      - name: 'Compute release tag'
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          OVERRIDE="${{ inputs.tag }}"
+          if [ -n "$OVERRIDE" ]; then
+            TAG="$OVERRIDE"
+          else
+            DATE=$(date -u +%Y%m%d)
+            TAG="$DATE"
+            N=0
+            # bump -rN until we find a free tag. Cap at 99 to avoid infinite loop.
+            while gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; do
+              N=$((N + 1))
+              if [ "$N" -gt 99 ]; then
+                echo "more than 99 collisions on $DATE, refusing to continue" >&2
+                exit 1
+              fi
+              TAG="${DATE}-r${N}"
+            done
+          fi
+          echo "Release tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: 'Download all artifacts from source run'
+        uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          run-id: ${{ steps.src.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          merge-multiple: false
+
+      - name: 'Collect release files'
+        id: collect
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p release_files
+          shopt -s nullglob globstar
+
+          PATTERN_LIST="${{ inputs.artifact_pattern }}"
+          # Fallback default when triggered by workflow_run (no inputs available).
+          if [ -z "$PATTERN_LIST" ]; then
+            PATTERN_LIST='**/*.7z **/*.zip **/*.tar.* **/*.tar **/*.gz **/*.dll **/*.so **/*.exe'
+          fi
+
+          declare -a found=()
+          for pat in $PATTERN_LIST; do
+            # match relative to artifacts/
+            while IFS= read -r -d '' f; do
+              found+=("$f")
+            done < <(find artifacts -type f -path "artifacts/$pat" -print0 2>/dev/null || true)
+            # also try plain ** glob via bash
+            for f in artifacts/$pat; do
+              [ -f "$f" ] && found+=("$f")
+            done
+          done
+
+          # dedup
+          declare -A seen
+          for f in "${found[@]}"; do
+            base=$(basename "$f")
+            # avoid name collisions by prefixing artifact dir
+            artifact_dir=$(echo "$f" | awk -F/ '{print $2}')
+            target="release_files/${artifact_dir}__${base}"
+            if [ -z "${seen[$target]:-}" ]; then
+              cp -v "$f" "$target"
+              seen[$target]=1
+            fi
+          done
+
+          count=$(find release_files -type f | wc -l)
+          echo "collected $count file(s) for release"
+          if [ "$count" -eq 0 ]; then
+            echo "no files matched the artifact_pattern" >&2
+            ls -laR artifacts | head -200 >&2
+            exit 1
+          fi
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: 'Show files to be uploaded'
+        shell: bash
+        run: |
+          echo "release_files/:"
+          ls -la release_files/
+
+      - name: 'Resolve release name'
+        id: naming
+        shell: bash
+        run: |
+          NAME="${{ inputs.release_name }}"
+          [ -z "$NAME" ] && NAME="${{ steps.tag.outputs.tag }}"
+          echo "name=$NAME" >> "$GITHUB_OUTPUT"
+
+      - name: 'Create or update release and attach files'
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          name: ${{ steps.naming.outputs.name }}
+          files: release_files/*
+          prerelease: ${{ inputs.prerelease || false }}
+          draft: ${{ inputs.draft || false }}
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 'Summary'
+        shell: bash
+        run: |
+          {
+            echo "## Release \`${{ steps.tag.outputs.tag }}\` published"
+            echo ""
+            echo "- source run: ${{ steps.src.outputs.run_id }}"
+            echo "- files attached: ${{ steps.collect.outputs.count }}"
+            echo ""
+            echo "### Files"
+            echo '```'
+            ls -la release_files/
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
