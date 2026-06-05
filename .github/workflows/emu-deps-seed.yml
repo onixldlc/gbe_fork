@@ -1,0 +1,80 @@
+name: "Deps base (seed third-party from gbe-deps image)"
+
+# THE shared dependency base for every build (linux + windows).
+#
+# A linux runner pulls the prebuilt ghcr.io/<owner>/gbe-deps image, copies the
+# pinned third-party tree (sources + premake/cmake/7za tools for BOTH linux and
+# windows) out of it, tars it, and uploads it as an artifact. Every build
+# workflow calls this first, then downloads the artifact — so the docker image
+# is the single source of deps for all of them.
+#
+# Why an artifact and not "build in the container": windows runners cannot pull
+# a linux image, so they consume the tar instead. Linux does the same for
+# uniformity. The per-OS *compile* of those deps still happens on the matching
+# runner (gcc on linux, MSVC on windows) inside each build workflow.
+
+on:
+  workflow_call:
+    inputs:
+      deps_image:
+        description: "Override gbe-deps image ref. Empty = <owner>/gbe-deps:latest."
+        required: false
+        type: string
+        default: ""
+    outputs:
+      artifact_name:
+        description: "Name of the uploaded third-party tar artifact."
+        value: ${{ jobs.seed.outputs.artifact_name }}
+  workflow_dispatch:
+    inputs:
+      deps_image:
+        description: "Override gbe-deps image ref. Empty = <owner>/gbe-deps:latest."
+        required: false
+        default: ""
+
+permissions:
+  contents: "read"
+  packages: "read"
+
+jobs:
+  seed:
+    name: "seed third-party"
+    runs-on: "ubuntu-24.04"
+    if: ${{ !cancelled() }}
+    outputs:
+      artifact_name: ${{ steps.naming.outputs.name }}
+    steps:
+      - name: "Compute artifact name"
+        id: naming
+        shell: "bash"
+        run: echo "name=gbe-third-party-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+
+      - name: "Pull gbe-deps image and copy third-party out"
+        shell: "bash"
+        run: |
+          set -euo pipefail
+          IMAGE="${{ inputs.deps_image }}"
+          if [ -z "$IMAGE" ]; then
+            OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+            IMAGE="ghcr.io/${OWNER}/gbe-deps:latest"
+          fi
+          echo "using image: $IMAGE"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$IMAGE"
+          CID=$(docker create "$IMAGE")
+          mkdir -p third-party
+          docker cp "$CID:/opt/gbe_deps/third-party/." third-party/
+          docker rm "$CID" >/dev/null
+
+      - name: "Tar third-party tree"
+        shell: "bash"
+        run: tar -czf third-party.tar.gz third-party
+
+      - name: "Upload third-party artifact"
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.naming.outputs.name }}
+          path: third-party.tar.gz
+          if-no-files-found: "error"
+          overwrite: true
+          retention-days: 1
