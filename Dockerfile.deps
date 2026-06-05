@@ -53,7 +53,6 @@ RUN mkdir -p \
         "$DEPS/deps/win/7za" \
         "$DEPS/deps/win/cmake" \
         "$DEPS/deps/common/curl" \
-        "$DEPS/deps/common/ingame_overlay" \
         "$DEPS/deps/common/libssq" \
         "$DEPS/deps/common/mbedtls" \
         "$DEPS/deps/common/opus" \
@@ -133,8 +132,12 @@ RUN set -euxo pipefail; \
     repack "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOBUF_VER}/protobuf-${PROTOBUF_VER}.tar.gz" protobuf "$DEPS/deps/common/protobuf/protobuf.tar.gz"; \
     repack "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VER}/SDL3-${SDL_VER}.tar.gz" sdl                       "$DEPS/deps/common/sdl/sdl.tar.gz"; \
     repack "https://github.com/madler/zlib/releases/download/v${ZLIB_VER}/zlib-${ZLIB_VER}.tar.gz" zlib                              "$DEPS/deps/common/zlib/zlib.tar.gz"; \
-    repack "https://github.com/BinaryAlien/libssq/archive/refs/tags/v${LIBSSQ_VER}.tar.gz" libssq                                    "$DEPS/deps/common/libssq/libssq.tar.gz"; \
-    repack "https://github.com/Nemirtingas/ingame_overlay/archive/${INGAME_OVERLAY_SHA}.tar.gz" ingame_overlay                       "$DEPS/deps/common/ingame_overlay/ingame_overlay.tar.gz"
+    repack "https://github.com/BinaryAlien/libssq/archive/refs/tags/v${LIBSSQ_VER}.tar.gz" libssq                                    "$DEPS/deps/common/libssq/libssq.tar.gz"
+
+# ingame_overlay (Nemirtingas) is intentionally NOT fetched: the build runs with
+# --disableoverlay, so the in-game overlay feature and this untrusted dependency
+# (+ its recursive submodules) are excluded entirely. Re-add a recursive clone
+# here and drop --disableoverlay in build_linux_premake.sh to bring it back.
 
 # libssq EDIT.diff — trailing-comma compile fix carried by gbe_fork. Inlined so
 # the image is self-contained (no dependency on the submodule branch).
@@ -173,7 +176,6 @@ RUN for spec in \
         "deps/common/sdl|SDL|release-${SDL_VER}|https://github.com/libsdl-org/SDL" \
         "deps/common/zlib|zlib|v${ZLIB_VER}|https://github.com/madler/zlib" \
         "deps/common/libssq|libssq|v${LIBSSQ_VER}|https://github.com/BinaryAlien/libssq" \
-        "deps/common/ingame_overlay|ingame_overlay|${INGAME_OVERLAY_SHA}|https://github.com/Nemirtingas/ingame_overlay" \
     ; do \
         IFS='|' read -r dir name ver url <<<"$spec" ; \
         printf '#### INFO\n\n%s\n\nVERSION: %s\nUPSTREAM: %s\n\n(fetched by Dockerfile.build)\n' "$name" "$ver" "$url" \

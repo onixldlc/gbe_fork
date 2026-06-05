@@ -124,6 +124,12 @@ newoption {
     description = "Add all header files from the third-party dependencies in the projects (no impact on build)",
 }
 
+newoption {
+    category = 'build',
+    trigger = "disableoverlay",
+    description = "Build without the in-game overlay feature (drops EMU_OVERLAY and the ingame_overlay dependency)",
+}
+
 -- windows options
 if os.target() == 'windows' then
 
@@ -497,6 +503,21 @@ local x64_deps_overlay_libdir = {
     path.join(deps_dir, "ingame_overlay/deps/mini_detour/install64/lib"),
 }
 
+-- --disableoverlay: cut the in-game overlay feature and its ingame_overlay
+-- dependency. steam_overlay.h provides an inline no-op Steam_Overlay stub when
+-- EMU_OVERLAY is undefined, so the emu builds + runs fully without it. Empties
+-- every overlay table so the experimental targets neither define EMU_OVERLAY
+-- nor link/search the ingame_overlay libs.
+local overlay_emu_define = { "EMU_OVERLAY" }
+if _OPTIONS["disableoverlay"] then
+    overlay_emu_define = {}
+    overlay_link = {}
+    x32_deps_overlay_include = {}
+    x64_deps_overlay_include = {}
+    x32_deps_overlay_libdir = {}
+    x64_deps_overlay_libdir = {}
+end
+
 -- generate proto
 if _OPTIONS["genproto"] then
     if genproto() then
@@ -857,7 +878,7 @@ project "api_experimental"
     ---------
     filter {} -- reset the filter and remove all active keywords
     defines { -- added to all filters, later defines will be appended
-        "EMU_OVERLAY", "ImTextureID=ImU64",
+        overlay_emu_define, "ImTextureID=ImU64",
         "EMU_EXPERIMENTAL_BUILD",
     }
 
@@ -988,7 +1009,7 @@ project "steamclient_experimental"
     ---------
     filter {} -- reset the filter and remove all active keywords
     defines { -- added to all filters, later defines will be appended
-        "STEAMCLIENT_DLL", "EMU_OVERLAY", "ImTextureID=ImU64",
+        "STEAMCLIENT_DLL", overlay_emu_define, "ImTextureID=ImU64",
         "EMU_EXPERIMENTAL_BUILD",
     }
 

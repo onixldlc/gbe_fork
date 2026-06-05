@@ -64,6 +64,12 @@ newoption {
 }
 
 newoption {
+    category = "build",
+    trigger = "disableoverlay",
+    description = "Skip the ingame_overlay dependency (paired with premake5.lua --disableoverlay)",
+}
+
+newoption {
     category = "extract",
     trigger = "ext-ssq",
     description = "Extract ssq",
@@ -468,7 +474,7 @@ end
 if _OPTIONS["ext-mbedtls"] or _OPTIONS["all-ext"] then
     table.insert(deps_to_extract, { 'mbedtls/mbedtls.tar.gz', 'mbedtls' })
 end
-if _OPTIONS["ext-ingame_overlay"] or _OPTIONS["all-ext"] then
+if (_OPTIONS["ext-ingame_overlay"] or _OPTIONS["all-ext"]) and not _OPTIONS["disableoverlay"] then
     table.insert(deps_to_extract, { 'ingame_overlay/ingame_overlay.tar.gz', 'ingame_overlay' })
 end
 if _OPTIONS["ext-opus"] or _OPTIONS["all-ext"] then
@@ -742,7 +748,7 @@ if _OPTIONS["build-protobuf"] or _OPTIONS["all-build"] then
     end
 end
 
-if _OPTIONS["build-ingame_overlay"] or _OPTIONS["all-build"] then
+if (_OPTIONS["build-ingame_overlay"] or _OPTIONS["all-build"]) and not _OPTIONS["disableoverlay"] then
     -- fixes 32-bit compilation of DX12
     local overaly_imgui_cfg_file = path.join(deps_dir, 'ingame_overlay', 'imconfig.imcfg')
     if not io.writefile(overaly_imgui_cfg_file, [[
