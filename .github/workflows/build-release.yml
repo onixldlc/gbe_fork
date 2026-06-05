@@ -1,19 +1,27 @@
 name: "Build release (all)"
 
-# Single manual button: run every build workflow, then publish their artifacts
-# to a GitHub Release — all in one run.
+# Build every target, then publish the artifacts to a GitHub Release — one run.
 #
-# Builds run as reusable workflow_call jobs, so the `release` job below lives in
-# the SAME run and can download their artifacts directly (no cross-run lookup).
+# Triggered two ways:
+#   * called by build-deps-image.yml right after a deps image rebuild (so the
+#     fresh image is what gets built/released), via workflow_call.
+#   * push of downstream changes (build scripts, these workflows, etc.).
+#
+# Dockerfile.deps and build-deps-image.yml are BLACKLISTED from the push trigger
+# so a deps change does not self-run this — build-deps-image owns that path and
+# calls us afterwards. The image workflow is never re-run by this one.
 #
 # Currently wired: linux. Windows builds get added as more `emu-*` jobs and to
 # the `release` job's `needs:` list later.
 
 on:
-  # workflow_dispatch only shows up once this file is on the default branch.
-  # Until then, run on every push to the working branch for testing.
+  workflow_call:
+    # invoked by build-deps-image.yml after the image is rebuilt
   push:
     branches: ["github-builder"]
+    paths-ignore:
+      - "Dockerfile.deps"
+      - ".github/workflows/build-deps-image.yml"
   workflow_dispatch:
     inputs:
       tag:
@@ -33,8 +41,8 @@ on:
         default: false
 
 permissions:
-  contents: "write"
-  packages: "read"
+  contents: "write"   # publish release
+  packages: "read"    # pull the deps image (seed)
   actions: "read"
 
 jobs:
@@ -49,7 +57,7 @@ jobs:
     name: "publish release"
     needs: ["emu-linux"]
     runs-on: "ubuntu-24.04"
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && needs['emu-linux'].result == 'success' }}
     steps:
       - name: "Checkout (repo context for gh)"
         uses: actions/checkout@v6

@@ -6,9 +6,14 @@ name: build deps image
 # branches).
 
 on:
+  # Upstream trigger: only a change to the deps image inputs rebuilds it. After
+  # building, this workflow calls build-release (see the `release` job) so the
+  # fresh image is what gets built + released — no separate trigger, no race.
   push:
+    branches: ["github-builder"]
     paths:
-      - 'Dockerfile.deps'
+      - "Dockerfile.deps"
+      - ".github/workflows/build-deps-image.yml"
   workflow_dispatch:
     inputs:
       tag_suffix:
@@ -16,12 +21,16 @@ on:
         required: false
         default: ''
 
+# workflow-level perms also govern the build-release workflow this one calls:
+# contents:write to publish the release, packages:write to push the image.
+permissions:
+  contents: write
+  packages: write
+  actions: read
+
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
     steps:
       - uses: actions/checkout@v4
 
@@ -29,7 +38,7 @@ jobs:
         id: tags
         run: |
           DATE=$(date -u +%Y%m%d)
-          SUFFIX="${{ github.event.inputs.tag_suffix }}"
+          SUFFIX="${{ inputs.tag_suffix }}"
           TAG="deps-${DATE}"
           [ -n "$SUFFIX" ] && TAG="${TAG}-${SUFFIX}"
           IMAGE=ghcr.io/${{ github.repository_owner }}/gbe-deps
@@ -58,8 +67,10 @@ jobs:
           tags: |
             ${{ steps.tags.outputs.date_tag }}
             ${{ steps.tags.outputs.latest_tag }}
-          provenance: true
-          sbom: true
+          # provenance/sbom off: they publish extra untagged manifests that
+          # clutter the package's version list.
+          provenance: false
+          sbom: false
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
@@ -90,3 +101,11 @@ jobs:
             cat MANIFEST.sha256
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # After the image is pushed, run the full build + release against it.
+  release:
+    name: "build + release"
+    needs: ["build"]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    uses: ./.github/workflows/build-release.yml
+    secrets: inherit

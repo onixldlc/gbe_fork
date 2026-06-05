@@ -1,9 +1,12 @@
 name: "Build emu (Linux)"
 
-# Reusable linux build. Pulls deps from the shared base (emu-deps-seed.yml ->
-# gbe-deps docker image -> third-party artifact), then compiles deps + every
-# target/config on an ubuntu runner via the repo's build_linux_premake.sh.
+# Reusable linux build. Pulls the pinned third-party tree straight out of the
+# gbe-deps docker image (linux runner can pull it directly — no seed artifact
+# needed), then compiles deps + every target/config via build_linux_premake.sh.
 # Uploads the result as artifact "emu-linux-<sha>".
+#
+# Kept as a single job (no nested reusable) so the call chain stays shallow:
+# build-deps-image -> build-release -> emu-build-linux.
 
 on:
   workflow_call:
@@ -19,15 +22,8 @@ env:
   THIRD_PARTY_BASE_DIR: "third-party"
 
 jobs:
-  # shared dependency base for all builds
-  deps:
-    name: "Deps base"
-    if: ${{ !cancelled() }}
-    uses: "./.github/workflows/emu-deps-seed.yml"
-
   build:
     name: "build (linux)"
-    needs: ["deps"]
     runs-on: "ubuntu-24.04"
     if: ${{ !cancelled() }}
 
@@ -35,18 +31,19 @@ jobs:
       - name: "Checkout branch"
         uses: actions/checkout@v6
 
-      - name: "Download seeded third-party artifact"
-        uses: actions/download-artifact@v8
-        with:
-          name: "${{ needs.deps.outputs.artifact_name }}"
-          path: "${{ github.workspace }}"
-
-      - name: "Extract third-party tarball"
+      - name: "Seed third-party from gbe-deps image"
         shell: "bash"
-        working-directory: "${{ github.workspace }}"
         run: |
-          tar -xzf third-party.tar.gz
-          rm -f third-party.tar.gz
+          set -euo pipefail
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER}/gbe-deps:latest"
+          echo "using image: $IMAGE"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$IMAGE"
+          CID=$(docker create "$IMAGE")
+          mkdir -p "${{ env.THIRD_PARTY_BASE_DIR }}"
+          docker cp "$CID:/opt/gbe_deps/third-party/." "${{ env.THIRD_PARTY_BASE_DIR }}/"
+          docker rm "$CID" >/dev/null
 
       - name: "Install required packages"
         shell: "bash"
