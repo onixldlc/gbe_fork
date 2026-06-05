@@ -1,0 +1,76 @@
+name: "Build emu (Linux)"
+
+# Reusable linux build. Pulls deps from the shared base (emu-deps-seed.yml ->
+# gbe-deps docker image -> third-party artifact), then compiles deps + every
+# target/config on an ubuntu runner via the repo's build_linux_premake.sh.
+# Uploads the result as artifact "emu-linux-<sha>".
+
+on:
+  workflow_call:
+    # reusable — called by build-release.yml
+  workflow_dispatch:
+    # manual trigger for standalone testing
+
+permissions:
+  contents: "read"
+  packages: "read"
+
+env:
+  THIRD_PARTY_BASE_DIR: "third-party"
+
+jobs:
+  # shared dependency base for all builds
+  deps:
+    name: "Deps base"
+    if: ${{ !cancelled() }}
+    uses: "./.github/workflows/emu-deps-seed.yml"
+
+  build:
+    name: "build (linux)"
+    needs: ["deps"]
+    runs-on: "ubuntu-24.04"
+    if: ${{ !cancelled() }}
+
+    steps:
+      - name: "Checkout branch"
+        uses: actions/checkout@v6
+
+      - name: "Download seeded third-party artifact"
+        uses: actions/download-artifact@v8
+        with:
+          name: "${{ needs.deps.outputs.artifact_name }}"
+          path: "${{ github.workspace }}"
+
+      - name: "Extract third-party tarball"
+        shell: "bash"
+        working-directory: "${{ github.workspace }}"
+        run: |
+          tar -xzf third-party.tar.gz
+          rm -f third-party.tar.gz
+
+      - name: "Install required packages"
+        shell: "bash"
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc-multilib g++-multilib \
+            libglx-dev libgl-dev libx11-dev:i386
+
+      - name: "Build emulator"
+        shell: "bash"
+        working-directory: "${{ github.workspace }}"
+        run: |
+          chmod +x ./${{ env.THIRD_PARTY_BASE_DIR }}/common/linux/premake/premake5
+          # --deps compiles third-party then builds every target/config.
+          # auto-picks ~70% of cores; its --j parser is buggy so don't pass it.
+          bash build_linux_premake.sh --deps
+
+      - name: "Upload target package"
+        uses: actions/upload-artifact@v7
+        with:
+          name: "emu-linux-${{ github.sha }}"
+          path: "build/linux"
+          if-no-files-found: "error"
+          compression-level: 9
+          retention-days: 1

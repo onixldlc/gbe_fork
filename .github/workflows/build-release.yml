@@ -1,0 +1,133 @@
+name: "Build release (all)"
+
+# Single manual button: run every build workflow, then publish their artifacts
+# to a GitHub Release — all in one run.
+#
+# Builds run as reusable workflow_call jobs, so the `release` job below lives in
+# the SAME run and can download their artifacts directly (no cross-run lookup).
+#
+# Currently wired: linux. Windows builds get added as more `emu-*` jobs and to
+# the `release` job's `needs:` list later.
+
+on:
+  # workflow_dispatch only shows up once this file is on the default branch.
+  # Until then, run on every push to the working branch for testing.
+  push:
+    branches: ["github-builder"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag override. Empty = auto YYYYMMDD (with -rN if taken)."
+        required: false
+        type: string
+        default: ""
+      draft:
+        description: "Create the release as a draft."
+        required: false
+        type: boolean
+        default: false
+      prerelease:
+        description: "Mark the release as a prerelease."
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: "write"
+  packages: "read"
+  actions: "read"
+
+jobs:
+  # -------- builds --------
+  emu-linux:
+    name: "emu linux"
+    if: ${{ !cancelled() }}
+    uses: "./.github/workflows/emu-build-linux.yml"
+
+  # -------- release --------
+  release:
+    name: "publish release"
+    needs: ["emu-linux"]
+    runs-on: "ubuntu-24.04"
+    if: ${{ !cancelled() }}
+    steps:
+      - name: "Checkout (repo context for gh)"
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: "Download all build artifacts from this run"
+        uses: actions/download-artifact@v8
+        with:
+          path: "artifacts"
+
+      - name: "Compute release tag"
+        id: tag
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: "bash"
+        run: |
+          set -euo pipefail
+          OVERRIDE="${{ inputs.tag }}"
+          if [ -n "$OVERRIDE" ]; then
+            TAG="$OVERRIDE"
+          else
+            DATE=$(date -u +%Y%m%d)
+            TAG="$DATE"
+            N=0
+            while gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; do
+              N=$((N + 1))
+              [ "$N" -gt 99 ] && { echo "too many tag collisions on $DATE" >&2; exit 1; }
+              TAG="${DATE}-r${N}"
+            done
+          fi
+          echo "release tag: $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      # Repack each artifact directory into one archive so the release gets a
+      # tidy set of files instead of thousands of loose binaries.
+      - name: "Repack artifacts"
+        id: pack
+        shell: "bash"
+        run: |
+          set -euo pipefail
+          mkdir -p release_files
+          shopt -s nullglob
+          count=0
+          for dir in artifacts/*/; do
+            name=$(basename "$dir")
+            ( cd "$dir" && zip -qr -9 "../../release_files/${name}.zip" . )
+            count=$((count + 1))
+          done
+          echo "packed $count artifact(s)"
+          if [ "$count" -eq 0 ]; then
+            echo "no artifacts found to release" >&2
+            exit 1
+          fi
+          ls -la release_files/
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+
+      - name: "Create release and attach files"
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: "${{ steps.tag.outputs.tag }}"
+          name: "${{ steps.tag.outputs.tag }}"
+          files: "release_files/*"
+          draft: ${{ inputs.draft }}
+          prerelease: ${{ inputs.prerelease }}
+          fail_on_unmatched_files: true
+          generate_release_notes: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Summary"
+        shell: "bash"
+        run: |
+          {
+            echo "## Release \`${{ steps.tag.outputs.tag }}\` published"
+            echo ""
+            echo "- artifacts attached: ${{ steps.pack.outputs.count }}"
+            echo ""
+            echo '```'
+            ls -la release_files/
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
