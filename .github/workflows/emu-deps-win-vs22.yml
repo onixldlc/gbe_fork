@@ -23,12 +23,45 @@ env:
 
 jobs:
   # Linux helper: pulls gbe-deps image, tars third-party, uploads as artifact.
-  # Windows runners cannot pull Linux images by default, so the artifact pattern is used.
+  # Inlined from seed-deps-artifact.yml to keep nesting ≤ 3 levels deep.
+  # (Windows runners cannot pull Linux images by default, so the artifact pattern is used.)
   seed:
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       packages: read
-    uses: ./.github/workflows/seed-deps-artifact.yml
+    outputs:
+      artifact_name: ${{ steps.naming.outputs.artifact_name }}
+    steps:
+      - name: "Checkout repository for seed action"
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            .github/actions/seed-third-party
+          sparse-checkout-cone-mode: false
+
+      - name: "Seed third-party"
+        uses: ./.github/actions/seed-third-party
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: "Tar third-party tree"
+        shell: bash
+        run: tar -czf third-party.tar.gz third-party
+
+      - name: "Compute artifact name"
+        id: naming
+        shell: bash
+        run: echo "artifact_name=gbe-third-party-${{ github.run_id }}" >> "$GITHUB_OUTPUT"
+
+      - name: "Upload third-party artifact"
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ steps.naming.outputs.artifact_name }}
+          path: third-party.tar.gz
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
 
   deps-build:
     needs: seed
