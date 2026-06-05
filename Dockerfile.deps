@@ -111,7 +111,8 @@ RUN cd /tmp \
 # ---------------------------------------------------------------------------
 RUN set -eux \
  && wget -q "https://github.com/curl/curl/releases/download/curl-$(echo ${CURL_VER} | tr . _)/curl-${CURL_VER}.tar.gz"           -O "$DEPS/deps/common/curl/curl.tar.gz" \
- && wget -q "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${MBEDTLS_VER}/mbedtls-${MBEDTLS_VER}.tar.bz2"        -O "$DEPS/deps/common/mbedtls/mbedtls.tar.bz2" \
+ && wget -q "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${MBEDTLS_VER}/mbedtls-${MBEDTLS_VER}.tar.bz2"        -O /tmp/mbedtls.tar.bz2 \
+ && bzip2 -dc /tmp/mbedtls.tar.bz2 | gzip -c > "$DEPS/deps/common/mbedtls/mbedtls.tar.gz" && rm -f /tmp/mbedtls.tar.bz2 \
  && wget -q "https://downloads.xiph.org/releases/opus/opus-${OPUS_VER}.tar.gz"                                                  -O "$DEPS/deps/common/opus/opus.tar.gz" \
  && wget -q "https://github.com/PortAudio/portaudio/archive/${PORTAUDIO_SHA}.tar.gz"                                            -O "$DEPS/deps/common/portaudio/portaudio.tar.gz" \
  && wget -q "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOBUF_VER}/protobuf-${PROTOBUF_VER}.tar.gz"    -O "$DEPS/deps/common/protobuf/protobuf.tar.gz" \
