@@ -516,6 +516,10 @@ if _OPTIONS["disableoverlay"] then
     x64_deps_overlay_include = {}
     x32_deps_overlay_libdir = {}
     x64_deps_overlay_libdir = {}
+    -- drop every overlay_experimental source: some (steam_overlay_stats.cpp)
+    -- include InGameOverlay headers unconditionally. The Steam_Overlay stub is
+    -- header-only inline, so no overlay .cpp is needed when EMU_OVERLAY is off.
+    overlay_files = {}
 end
 
 -- generate proto
