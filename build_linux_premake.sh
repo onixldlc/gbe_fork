@@ -45,18 +45,20 @@ chmod 777 "$premake_exe"
 # build deps
 if [[ $BUILD_DEPS = 1 ]]; then
   export CMAKE_GENERATOR="Unix Makefiles"
-  "$premake_exe" --file="premake5-deps.lua" --disableoverlay --all-ext --all-build --64-build --32-build --verbose --clean --j=$build_threads --os=linux gmake2 || {
+  "$premake_exe" --file="premake5-deps.lua" --disableoverlay --all-ext --all-build --64-build --32-build --verbose --clean --j=$build_threads --os=linux gmake || {
     exit 1;
   }
 fi
 
 if [[ $GEN_PROJECT = 1 ]]; then
-  "$premake_exe" --genproto --disableoverlay --os=linux gmake2 || {
+  "$premake_exe" --genproto --disableoverlay --os=linux gmake || {
     exit 1;
   }
 fi
 
-pushd ./"build/project/gmake2/linux"
+# premake 5.0.0-beta8 maps the deprecated "gmake2" action to "gmake", so the
+# project tree lands under build/project/gmake/ — use that.
+pushd ./"build/project/gmake/linux"
 
 # you can select individual or all
 
@@ -65,8 +67,8 @@ make -j $build_threads config=debug_x64 || {
   exit 1;
 }
 
-echo; echo building debug x32
-make -j $build_threads config=debug_x32 || {
+echo; echo building debug x86
+make -j $build_threads config=debug_x86 || {
   exit 1;
 }
 
@@ -75,8 +77,8 @@ make -j $build_threads config=release_x64 || {
   exit 1;
 }
 
-echo; echo building release x32
-make -j $build_threads config=release_x32 || {
+echo; echo building release x86
+make -j $build_threads config=release_x86 || {
   exit 1;
 }
 
