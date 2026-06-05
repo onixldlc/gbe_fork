@@ -107,19 +107,34 @@ RUN cd /tmp \
  && rm -rf 7z-extra 7z-extra.7z
 
 # ---------------------------------------------------------------------------
-# Source tarballs (deps/common). premake5-deps.lua extracts and builds these.
+# Source tarballs (deps/common). premake5-deps.lua extracts each archive into
+# deps_dir and expects the archive's single top-level folder to be named exactly
+# after the dep (it then runs cmake -S deps_dir/<name>). Upstream archives wrap
+# as "<name>-<version>", so `repack` below re-tars each one with the top folder
+# renamed to the canonical name. `tar -xf` autodetects gz/bz2, so the mbedtls
+# .tar.bz2 is normalised to .tar.gz here too.
 # ---------------------------------------------------------------------------
-RUN set -eux \
- && wget -q "https://github.com/curl/curl/releases/download/curl-$(echo ${CURL_VER} | tr . _)/curl-${CURL_VER}.tar.gz"           -O "$DEPS/deps/common/curl/curl.tar.gz" \
- && wget -q "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${MBEDTLS_VER}/mbedtls-${MBEDTLS_VER}.tar.bz2"        -O /tmp/mbedtls.tar.bz2 \
- && bzip2 -dc /tmp/mbedtls.tar.bz2 | gzip -c > "$DEPS/deps/common/mbedtls/mbedtls.tar.gz" && rm -f /tmp/mbedtls.tar.bz2 \
- && wget -q "https://downloads.xiph.org/releases/opus/opus-${OPUS_VER}.tar.gz"                                                  -O "$DEPS/deps/common/opus/opus.tar.gz" \
- && wget -q "https://github.com/PortAudio/portaudio/archive/${PORTAUDIO_SHA}.tar.gz"                                            -O "$DEPS/deps/common/portaudio/portaudio.tar.gz" \
- && wget -q "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOBUF_VER}/protobuf-${PROTOBUF_VER}.tar.gz"    -O "$DEPS/deps/common/protobuf/protobuf.tar.gz" \
- && wget -q "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VER}/SDL3-${SDL_VER}.tar.gz"                     -O "$DEPS/deps/common/sdl/sdl.tar.gz" \
- && wget -q "https://github.com/madler/zlib/releases/download/v${ZLIB_VER}/zlib-${ZLIB_VER}.tar.gz"                             -O "$DEPS/deps/common/zlib/zlib.tar.gz" \
- && wget -q "https://github.com/BinaryAlien/libssq/archive/refs/tags/v${LIBSSQ_VER}.tar.gz"                                     -O "$DEPS/deps/common/libssq/libssq.tar.gz" \
- && wget -q "https://github.com/Nemirtingas/ingame_overlay/archive/${INGAME_OVERLAY_SHA}.tar.gz"                                -O "$DEPS/deps/common/ingame_overlay/ingame_overlay.tar.gz"
+RUN set -euxo pipefail; \
+    repack() { \
+      local url="$1" name="$2" out="$3" tmp inner; \
+      tmp="$(mktemp -d)"; \
+      wget -q "$url" -O "$tmp/dl"; \
+      mkdir -p "$tmp/x"; \
+      tar -C "$tmp/x" -xf "$tmp/dl"; \
+      inner="$(ls "$tmp/x")"; \
+      mv "$tmp/x/$inner" "$tmp/x/$name"; \
+      tar -C "$tmp/x" -czf "$out" "$name"; \
+      rm -rf "$tmp"; \
+    }; \
+    repack "https://github.com/curl/curl/releases/download/curl-$(echo ${CURL_VER} | tr . _)/curl-${CURL_VER}.tar.gz" curl           "$DEPS/deps/common/curl/curl.tar.gz"; \
+    repack "https://github.com/Mbed-TLS/mbedtls/releases/download/mbedtls-${MBEDTLS_VER}/mbedtls-${MBEDTLS_VER}.tar.bz2" mbedtls      "$DEPS/deps/common/mbedtls/mbedtls.tar.gz"; \
+    repack "https://downloads.xiph.org/releases/opus/opus-${OPUS_VER}.tar.gz" opus                                                   "$DEPS/deps/common/opus/opus.tar.gz"; \
+    repack "https://github.com/PortAudio/portaudio/archive/${PORTAUDIO_SHA}.tar.gz" portaudio                                        "$DEPS/deps/common/portaudio/portaudio.tar.gz"; \
+    repack "https://github.com/protocolbuffers/protobuf/releases/download/v${PROTOBUF_VER}/protobuf-${PROTOBUF_VER}.tar.gz" protobuf "$DEPS/deps/common/protobuf/protobuf.tar.gz"; \
+    repack "https://github.com/libsdl-org/SDL/releases/download/release-${SDL_VER}/SDL3-${SDL_VER}.tar.gz" sdl                       "$DEPS/deps/common/sdl/sdl.tar.gz"; \
+    repack "https://github.com/madler/zlib/releases/download/v${ZLIB_VER}/zlib-${ZLIB_VER}.tar.gz" zlib                              "$DEPS/deps/common/zlib/zlib.tar.gz"; \
+    repack "https://github.com/BinaryAlien/libssq/archive/refs/tags/v${LIBSSQ_VER}.tar.gz" libssq                                    "$DEPS/deps/common/libssq/libssq.tar.gz"; \
+    repack "https://github.com/Nemirtingas/ingame_overlay/archive/${INGAME_OVERLAY_SHA}.tar.gz" ingame_overlay                       "$DEPS/deps/common/ingame_overlay/ingame_overlay.tar.gz"
 
 # libssq EDIT.diff — trailing-comma compile fix carried by gbe_fork. Inlined so
 # the image is self-contained (no dependency on the submodule branch).
