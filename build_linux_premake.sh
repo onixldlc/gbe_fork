@@ -60,18 +60,7 @@ fi
 # project tree lands under build/project/gmake/ — use that.
 pushd ./"build/project/gmake/linux"
 
-# you can select individual or all
-
-echo; echo building debug x64
-make -j $build_threads config=debug_x64 || {
-  exit 1;
-}
-
-echo; echo building debug x86
-make -j $build_threads config=debug_x86 || {
-  exit 1;
-}
-
+# release only — debug builds are huge (~700MB) and not shipped
 echo; echo building release x64
 make -j $build_threads config=release_x64 || {
   exit 1;
