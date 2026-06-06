@@ -611,7 +611,7 @@ else -- linux or macos
     zlib_name = 'libz'
     mbedtls_name = 'libmbedtls'
     mbedcrypto_name = 'libmbedcrypto'
-    mbedx509_name = 'mbedx509'
+    mbedx509_name = 'libmbedx509'
 end
 -- extension
 if _ACTION and string.match(_ACTION, 'vs.+') then
