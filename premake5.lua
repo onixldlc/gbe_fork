@@ -1226,6 +1226,28 @@ project "tool_generate_interfaces"
 -- End tool_generate_interfaces
 
 
+-- Project tool_dltest (Linux only)
+-- Tiny dlopen probe for diagnosing why a shared object (game plugin / mod)
+-- fails to load. See tools/dltest/run_dltest.sh for the wrapper.
+---------
+if _TARGET_OS == "linux" then
+project "tool_dltest"
+    kind "ConsoleApp"
+    location "%{wks.location}/%{prj.name}"
+    targetdir(path.join(build_dir, os_iden, _ACTION, "%{cfg.buildcfg}/tools/dltest"))
+    targetname "dltest_%{cfg.platform}"
+    language "C"
+
+    files {
+        "tools/dltest/dltest.c",
+    }
+    links {
+        "dl",
+    }
+end
+-- End tool_dltest
+
+
 -- Project lib_steamnetworkingsockets START
 project "lib_steamnetworkingsockets"
     kind "SharedLib"

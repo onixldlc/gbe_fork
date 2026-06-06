@@ -6,9 +6,9 @@ name: build deps image
 # branches).
 
 on:
-  # Upstream trigger: only a change to the deps image inputs rebuilds it. After
-  # building, this workflow calls build-release (see the `release` job) so the
-  # fresh image is what gets built + released — no separate trigger, no race.
+  # Standalone: only a change to the deps image inputs rebuilds the gbe-deps
+  # source image. It does not chain — after a deps bump, trigger build-env-linux
+  # to recompile on top of the refreshed sources.
   push:
     branches: ["github-builder"]
     paths:
@@ -21,12 +21,9 @@ on:
         required: false
         default: ''
 
-# workflow-level perms also govern the build-release workflow this one calls:
-# contents:write to publish the release, packages:write to push the image.
 permissions:
-  contents: write
+  contents: read
   packages: write
-  actions: read
 
 jobs:
   build:
@@ -102,10 +99,3 @@ jobs:
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-  # After the image is pushed, run the full build + release against it.
-  release:
-    name: "build + release"
-    needs: ["build"]
-    if: ${{ !cancelled() && needs.build.result == 'success' }}
-    uses: ./.github/workflows/build-release.yml
-    secrets: inherit

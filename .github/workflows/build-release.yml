@@ -2,26 +2,26 @@ name: "Build release (all)"
 
 # Build every target, then publish the artifacts to a GitHub Release — one run.
 #
-# Triggered two ways:
-#   * called by build-deps-image.yml right after a deps image rebuild (so the
-#     fresh image is what gets built/released), via workflow_call.
-#   * push of downstream changes (build scripts, these workflows, etc.).
+# The emu build pulls gbe-env:linux-latest (which ships PRECOMPILED deps), so it
+# only compiles the emu — no ~40min dep build per run.
 #
-# Dockerfile.deps and build-deps-image.yml are BLACKLISTED from the push trigger
-# so a deps change does not self-run this — build-deps-image owns that path and
-# calls us afterwards. The image workflow is never re-run by this one.
+# Standalone: runs on push of downstream changes (emu source, build scripts).
+# The deps/env image inputs are BLACKLISTED so changing them doesn't self-run
+# this — they rebuild their images via build-deps-image / build-env-linux, and
+# the next downstream push here picks up the refreshed gbe-env:linux-latest.
 #
-# Currently wired: linux. Windows builds get added as more `emu-*` jobs and to
-# the `release` job's `needs:` list later.
+# Currently wired: linux. Windows builds get added as more build jobs + to the
+# `release` job's `needs:` list later.
 
 on:
-  workflow_call:
-    # invoked by build-deps-image.yml after the image is rebuilt
   push:
     branches: ["github-builder"]
     paths-ignore:
       - "Dockerfile.deps"
+      - "Dockerfile.env-linux"
+      - "premake5-deps.lua"
       - ".github/workflows/build-deps-image.yml"
+      - ".github/workflows/build-env-linux.yml"
   workflow_dispatch:
     inputs:
       tag:
@@ -46,18 +46,67 @@ permissions:
   actions: "read"
 
 jobs:
-  # -------- builds --------
-  emu-linux:
-    name: "emu linux"
+  # -------- build linux (deps already compiled in the image) --------
+  build-linux:
+    name: "build (linux)"
+    runs-on: "ubuntu-24.04"
     if: ${{ !cancelled() }}
-    uses: "./.github/workflows/emu-build-linux.yml"
+    permissions:
+      contents: "read"
+      packages: "read"
+    steps:
+      - name: "Checkout branch"
+        uses: actions/checkout@v6
+
+      - name: "Pull gbe-env:linux image: seed sources + precompiled deps"
+        shell: "bash"
+        run: |
+          set -euo pipefail
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE="ghcr.io/${OWNER}/gbe-env:linux-latest"
+          echo "using image: $IMAGE"
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull "$IMAGE"
+          CID=$(docker create "$IMAGE")
+          mkdir -p third-party build/deps/linux
+          # sources + tools (premake/cmake/7za) and the COMPILED deps
+          docker cp "$CID:/opt/gbe_deps/third-party/." third-party/
+          docker cp "$CID:/opt/gbe_build/build/deps/linux/." build/deps/linux/
+          docker rm "$CID" >/dev/null
+
+      - name: "Install required packages"
+        shell: "bash"
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            build-essential gcc-multilib g++-multilib \
+            libglx-dev libgl-dev libx11-dev:i386
+
+      - name: "Build emulator (reusing precompiled deps)"
+        shell: "bash"
+        working-directory: "${{ github.workspace }}"
+        run: |
+          chmod +x ./third-party/common/linux/premake/premake5
+          # no --deps: the deps are already compiled in build/deps/linux. The
+          # script just generates project files and builds the release targets.
+          bash build_linux_premake.sh
+
+      - name: "Upload target package"
+        uses: actions/upload-artifact@v7
+        with:
+          name: "gbe_linux"
+          path: "build/linux/gmake"
+          if-no-files-found: "error"
+          compression-level: 9
+          retention-days: 1
 
   # -------- release --------
   release:
     name: "publish release"
-    needs: ["emu-linux"]
+    needs: ["build-linux"]
     runs-on: "ubuntu-24.04"
-    if: ${{ !cancelled() && needs['emu-linux'].result == 'success' }}
+    if: ${{ !cancelled() && needs['build-linux'].result == 'success' }}
     steps:
       - name: "Checkout (repo context for gh)"
         uses: actions/checkout@v6
